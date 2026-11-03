@@ -1,0 +1,6 @@
+{
+  "name": "Meta World - 3D Multiplayer Nature",
+  "description": "A web-based 3D multiplayer meta world prototype featuring low-poly nature environments, customizable avatars, third-person controls, and real-time chat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
