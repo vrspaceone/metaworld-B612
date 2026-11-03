@@ -29,7 +29,24 @@ export class RemotePlayersManager {
 
     const rig = createCharacter(player.appearance || player.color);
     rig.root.position.set(player.position.x, player.position.y, player.position.z);
-    rig.root.rotation.y = player.rotationY;
+    
+    // Align rig Up vector with asteroid surface normal
+    const norm = new THREE.Vector3(player.position.x, player.position.y, player.position.z).normalize();
+    if (norm.lengthSq() > 0.001) {
+      const helper = Math.abs(norm.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+      const east = new THREE.Vector3().crossVectors(helper, norm).normalize();
+      const north = new THREE.Vector3().crossVectors(norm, east).normalize();
+      const facing = new THREE.Vector3()
+        .addScaledVector(north, Math.cos(player.rotationY))
+        .addScaledVector(east, Math.sin(player.rotationY))
+        .normalize();
+      const right = new THREE.Vector3().crossVectors(norm, facing).normalize();
+      const m = new THREE.Matrix4().makeBasis(right, norm, facing);
+      rig.root.quaternion.setFromRotationMatrix(m);
+    } else {
+      rig.root.rotation.y = player.rotationY;
+    }
+
     if (player.emote) {
       rig.currentEmote = player.emote;
     }
@@ -201,7 +218,23 @@ export class RemotePlayersManager {
       instance.currentRotY += diff * Math.min(1, delta * 12);
 
       instance.rig.root.position.copy(instance.currentPos);
-      instance.rig.root.rotation.y = instance.currentRotY;
+
+      // Orient remote player to surface normal and heading on Asteroid B-612
+      const norm = instance.currentPos.clone().normalize();
+      if (norm.lengthSq() > 0.001) {
+        const helper = Math.abs(norm.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+        const east = new THREE.Vector3().crossVectors(helper, norm).normalize();
+        const north = new THREE.Vector3().crossVectors(norm, east).normalize();
+        const facing = new THREE.Vector3()
+          .addScaledVector(north, Math.cos(instance.currentRotY))
+          .addScaledVector(east, Math.sin(instance.currentRotY))
+          .normalize();
+        const right = new THREE.Vector3().crossVectors(norm, facing).normalize();
+        const m = new THREE.Matrix4().makeBasis(right, norm, facing);
+        instance.rig.root.quaternion.setFromRotationMatrix(m);
+      } else {
+        instance.rig.root.rotation.y = instance.currentRotY;
+      }
 
       // Animate character limbs
       animateCharacterRig(instance.rig, delta, instance.isMoving, instance.isJumping);

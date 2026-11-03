@@ -15,7 +15,14 @@ import {
   CHARACTER_PRESETS,
   DEFAULT_APPEARANCE,
 } from './game/character.ts';
-import { buildNatureWorld, getTerrainHeight, WorldEnvironment } from './game/world.ts';
+import {
+  buildAsteroidB612,
+  getAsteroidRadius,
+  getSurfacePosition,
+  ASTEROID_BASE_RADIUS,
+  B612_LOCATIONS,
+  WorldEnvironment,
+} from './game/world.ts';
 import { ThirdPersonCamera } from './game/camera.ts';
 import { networkManager } from './game/network.ts';
 import { RemotePlayerInstance, RemotePlayersManager } from './game/remotePlayers.ts';
@@ -30,6 +37,10 @@ import { EmoteBar } from './components/EmoteBar.tsx';
 import { CharacterCustomizerModal } from './components/CharacterCustomizerModal.tsx';
 import { MobileQuickMenu } from './components/MobileQuickMenu.tsx';
 import { Compass, Server, Users, Volume2, VolumeX, HelpCircle, Shirt, Video, MoreHorizontal, MessageSquare } from 'lucide-react';
+
+// Initial spawn direction on Asteroid B-612 (Near Rose plateau & signpost)
+const INITIAL_SPAWN_DIR = new THREE.Vector3(0, 0.985, 0.17).normalize();
+const INITIAL_SPAWN_POS = getSurfacePosition(INITIAL_SPAWN_DIR);
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -61,7 +72,11 @@ export default function App() {
   // Game data state for 2D overlays
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [playerList, setPlayerList] = useState<PlayerData[]>([]);
-  const [selfPosState, setSelfPosState] = useState<Vector3D>({ x: 0, y: 0, z: 5.5 });
+  const [selfPosState, setSelfPosState] = useState<Vector3D>({
+    x: INITIAL_SPAWN_POS.x,
+    y: INITIAL_SPAWN_POS.y,
+    z: INITIAL_SPAWN_POS.z,
+  });
   const [activeRemotePlayers, setActiveRemotePlayers] = useState<RemotePlayerInstance[]>([]);
   const [viewportSize, setViewportSize] = useState<{ width: number; height: number }>({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
@@ -75,10 +90,13 @@ export default function App() {
   const remoteMgrRef = useRef<RemotePlayersManager | null>(null);
   const worldEnvRef = useRef<WorldEnvironment | null>(null);
 
-  // Player Kinematics
-  const playerPosRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 5.5));
-  const playerVelocityRef = useRef<THREE.Vector3>(new THREE.Vector3());
-  const playerRotYRef = useRef<number>(Math.PI);
+  // Asteroid B-612 Player Kinematics
+  const playerPosRef = useRef<THREE.Vector3>(INITIAL_SPAWN_POS.clone());
+  const playerNormalRef = useRef<THREE.Vector3>(INITIAL_SPAWN_DIR.clone());
+  const playerFacingRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 1));
+  const playerRotYRef = useRef<number>(0);
+  const jumpAltitudeRef = useRef<number>(0);
+  const jumpVelocityRef = useRef<number>(0);
   const isGroundedRef = useRef<boolean>(true);
   const isMovingRef = useRef<boolean>(false);
   const isJumpingRef = useRef<boolean>(false);
@@ -125,8 +143,12 @@ export default function App() {
         scene.remove(localRigRef.current.root);
 
         const newRig = createCharacter(appearance);
+        const norm = playerPosRef.current.clone().normalize();
+        const right = new THREE.Vector3().crossVectors(norm, playerFacingRef.current).normalize();
+        const fwd = new THREE.Vector3().crossVectors(right, norm).normalize();
+        const m = new THREE.Matrix4().makeBasis(right, norm, fwd);
         newRig.root.position.copy(playerPosRef.current);
-        newRig.root.rotation.y = playerRotYRef.current;
+        newRig.root.quaternion.setFromRotationMatrix(m);
         const nameplate = createNameplateSprite(nickname, color, true);
         newRig.nameplateSprite = nameplate;
         newRig.root.add(nameplate);
@@ -175,8 +197,12 @@ export default function App() {
         });
 
         const newRig = createCharacter(newAppearance);
+        const norm = pos.clone().normalize();
+        const right = new THREE.Vector3().crossVectors(norm, playerFacingRef.current).normalize();
+        const fwd = new THREE.Vector3().crossVectors(right, norm).normalize();
+        const m = new THREE.Matrix4().makeBasis(right, norm, fwd);
         newRig.root.position.copy(pos);
-        newRig.root.rotation.y = rotY;
+        newRig.root.quaternion.setFromRotationMatrix(m);
         newRig.currentEmote = localRigRef.current.currentEmote;
         newRig.emoteTime = localRigRef.current.emoteTime;
 
@@ -252,7 +278,7 @@ export default function App() {
   // Handle jump trigger for touch and key
   const triggerJump = useCallback(() => {
     if (isGroundedRef.current) {
-      playerVelocityRef.current.y = 8.8; // Jump impulse
+      jumpVelocityRef.current = 8.5; // Low-gravity asteroid jump impulse
       isGroundedRef.current = false;
       isJumpingRef.current = true;
       if (localRigRef.current && localRigRef.current.currentEmote !== 'none') {
@@ -281,15 +307,15 @@ export default function App() {
 
     // 1. Scene & Environment
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#bae6fd'); // Soft sky blue
-    scene.fog = new THREE.FogExp2('#bae6fd', 0.016); // Horizon fog match
+    scene.background = new THREE.Color('#070714'); // Asteroid B-612 cosmic space background
+    scene.fog = null; // Pristine cosmic starfield without atmospheric fog
 
     // 2. Camera
     const camera = new THREE.PerspectiveCamera(
       55,
       container.clientWidth / container.clientHeight,
       0.1,
-      250
+      600
     );
     cameraRef.current = camera;
 
@@ -313,13 +339,18 @@ export default function App() {
 
     container.replaceChildren(renderer.domElement);
 
-    // 4. Build Low-Poly Nature World
-    const worldEnv = buildNatureWorld(scene);
+    // 4. Build Asteroid B-612 World
+    const worldEnv = buildAsteroidB612(scene);
     worldEnvRef.current = worldEnv;
 
     // 5. Build Local Player Character Rig
     const localRig = createCharacter(selfAppearance);
+    const initNorm = playerPosRef.current.clone().normalize();
+    const initRight = new THREE.Vector3().crossVectors(initNorm, playerFacingRef.current).normalize();
+    const initFwd = new THREE.Vector3().crossVectors(initRight, initNorm).normalize();
+    const initMat = new THREE.Matrix4().makeBasis(initRight, initNorm, initFwd);
     localRig.root.position.copy(playerPosRef.current);
+    localRig.root.quaternion.setFromRotationMatrix(initMat);
     const localNameplate = createNameplateSprite(selfNickname, selfColor, true);
     localRig.nameplateSprite = localNameplate;
     localRig.root.add(localNameplate);
@@ -600,58 +631,79 @@ export default function App() {
           setCurrentEmote('none');
         }
 
+        const norm = playerPosRef.current.clone().normalize();
+        if (norm.lengthSq() < 0.001) norm.set(0, 1, 0);
+
+        // Compute camera-relative tangent vectors on Asteroid B-612
+        const camToPlayer = playerPosRef.current.clone().sub(camera.position);
+        // Project camToPlayer onto the surface tangent plane: camFwdTangent = camToPlayer - norm * (camToPlayer . norm)
+        const camFwdTangent = camToPlayer.sub(norm.clone().multiplyScalar(camToPlayer.dot(norm))).normalize();
+        const camRightTangent = camFwdTangent.clone().cross(norm).normalize();
+
         if (isMoving) {
           const normX = moveX / inputLen;
           const normZ = moveZ / inputLen;
 
-          // Camera-relative movement vector
-          const camAngle = tpCamera.theta;
-          const worldDirX = normX * Math.cos(camAngle) + normZ * Math.sin(camAngle);
-          const worldDirZ = -normX * Math.sin(camAngle) + normZ * Math.cos(camAngle);
+          // Tangent move direction (-normZ is forward W key, normX is right D key)
+          const moveTangent = new THREE.Vector3()
+            .addScaledVector(camRightTangent, normX)
+            .addScaledVector(camFwdTangent, -normZ)
+            .normalize();
 
-          const moveSpeed = 6.2; // Smooth exploratory walking speed
-          playerPosRef.current.x += worldDirX * moveSpeed * delta;
-          playerPosRef.current.z += worldDirZ * moveSpeed * delta;
+          const moveSpeed = 6.4; // Asteroid exploration walk speed
+          const travelDist = moveSpeed * delta;
+          const rotAngle = travelDist / ASTEROID_BASE_RADIUS;
 
-          // Smoothly rotate character to face travel direction
-          const targetRotY = Math.atan2(worldDirX, worldDirZ);
-          let diff = (targetRotY - playerRotYRef.current) % (Math.PI * 2);
-          if (diff < -Math.PI) diff += Math.PI * 2;
-          if (diff > Math.PI) diff -= Math.PI * 2;
-          playerRotYRef.current += diff * Math.min(1, delta * 15);
+          // Rotation axis on sphere is orthogonal to norm and moveTangent
+          const rotAxis = norm.clone().cross(moveTangent).normalize();
+          norm.applyAxisAngle(rotAxis, rotAngle).normalize();
+          playerNormalRef.current.copy(norm);
 
-          // Sound
+          // Smoothly rotate facing tangent towards movement
+          playerFacingRef.current.lerp(moveTangent, Math.min(1, delta * 14)).normalize();
+
+          // Footstep audio
           if (isGroundedRef.current) {
             soundEngine.playStep();
           }
         }
 
-        // Gravity & Jump Physics
+        // Low-gravity asteroid jump physics along surface normal
         const gravity = 22.0;
-        playerVelocityRef.current.y -= gravity * delta;
-        playerPosRef.current.y += playerVelocityRef.current.y * delta;
+        if (!isGroundedRef.current) {
+          jumpVelocityRef.current -= gravity * delta;
+          jumpAltitudeRef.current += jumpVelocityRef.current * delta;
 
-        // Ground Height Check
-        const groundY = getTerrainHeight(playerPosRef.current.x, playerPosRef.current.z);
-        if (playerPosRef.current.y <= groundY) {
-          playerPosRef.current.y = groundY;
-          playerVelocityRef.current.y = 0;
-          isGroundedRef.current = true;
-          isJumpingRef.current = false;
+          if (jumpAltitudeRef.current <= 0) {
+            jumpAltitudeRef.current = 0;
+            jumpVelocityRef.current = 0;
+            isGroundedRef.current = true;
+            isJumpingRef.current = false;
+          }
         }
 
-        // Clamp to world radius ~54 units
-        const distFromCenter = Math.hypot(playerPosRef.current.x, playerPosRef.current.z);
-        if (distFromCenter > 54) {
-          const ratio = 54 / distFromCenter;
-          playerPosRef.current.x *= ratio;
-          playerPosRef.current.z *= ratio;
-        }
+        // Compute surface position on Asteroid B-612 + jump altitude
+        const surfaceR = getAsteroidRadius(norm);
+        const currentR = surfaceR + jumpAltitudeRef.current;
+        playerPosRef.current.copy(norm).multiplyScalar(currentR);
 
-        // Update local character rig
+        // Keep facing direction strictly on tangent plane (orthogonal to norm)
+        playerFacingRef.current.sub(norm.clone().multiplyScalar(playerFacingRef.current.dot(norm))).normalize();
+        const right = new THREE.Vector3().crossVectors(norm, playerFacingRef.current).normalize();
+        const forward = new THREE.Vector3().crossVectors(right, norm).normalize();
+
+        // Calculate heading angle on local tangent plane for multiplayer sync
+        const helper = Math.abs(norm.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+        const east = new THREE.Vector3().crossVectors(helper, norm).normalize();
+        const north = new THREE.Vector3().crossVectors(norm, east).normalize();
+        const headingAngle = Math.atan2(forward.dot(east), forward.dot(north));
+        playerRotYRef.current = headingAngle;
+
+        // Update local character rig orientation flush to asteroid surface
         if (localRigRef.current) {
+          const m = new THREE.Matrix4().makeBasis(right, norm, forward);
           localRigRef.current.root.position.copy(playerPosRef.current);
-          localRigRef.current.root.rotation.y = playerRotYRef.current;
+          localRigRef.current.root.quaternion.setFromRotationMatrix(m);
           animateCharacterRig(
             localRigRef.current,
             delta,
@@ -660,8 +712,10 @@ export default function App() {
           );
         }
 
-        // Campfire audio proximity
-        soundEngine.updateCampfireProximity(distFromCenter);
+        // Rose landmark proximity audio (near the North Pole)
+        const rosePos = getSurfacePosition(B612_LOCATIONS.rose);
+        const distToRose = playerPosRef.current.distanceTo(rosePos);
+        soundEngine.updateCampfireProximity(distToRose);
 
         // Network replication tick (every ~40ms)
         syncTickAccumulator += delta;
@@ -669,7 +723,7 @@ export default function App() {
           syncTickAccumulator = 0;
           networkManager.sendMovement(
             playerPosRef.current,
-            playerRotYRef.current,
+            headingAngle,
             isMoving,
             !isGroundedRef.current,
             localRigRef.current?.currentEmote
@@ -764,7 +818,7 @@ export default function App() {
             title="카메라 시점 변경"
           >
             <Video className="w-4 h-4 text-blue-400" />
-            <span>시점: {cameraPreset === 'close' ? '근접' : cameraPreset === 'normal' ? '기본' : cameraPreset === 'far' ? '원거리' : '탑뷰'}</span>
+            <span>시점: {cameraPreset === 'close' ? '근접' : cameraPreset === 'normal' ? '기본' : cameraPreset === 'far' ? '원거리' : '소행성 전경'}</span>
           </button>
 
           {/* Mobile Right Controls: Chat & Quick Menu */}
@@ -810,7 +864,7 @@ export default function App() {
                     : 'text-slate-300 hover:text-white hover:bg-slate-800'
                 }`}
               >
-                {preset === 'close' ? '근접' : preset === 'normal' ? '기본' : preset === 'far' ? '원거리' : '탑뷰'}
+                {preset === 'close' ? '근접' : preset === 'normal' ? '기본' : preset === 'far' ? '원거리' : '소행성 전경'}
               </button>
             ))}
           </div>
@@ -822,9 +876,9 @@ export default function App() {
               style={{ backgroundColor: selfAppearance.shirtColor }}
             />
             <span className="text-xs font-bold tracking-wide text-white">
-              Meta World
+              소행성 B-612
             </span>
-            <span className="text-xs text-slate-400 font-medium">자연 프로토타입</span>
+            <span className="text-xs text-amber-300 font-medium">어린왕자의 별</span>
           </div>
 
           {/* Zone 3: Primary Action & Player status */}

@@ -51,13 +51,13 @@ export const WorldEntryModal: React.FC<WorldEntryModalProps> = ({
               </div>
               <div>
                 <h1 className="text-xl md:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                  Meta World
-                  <span className="text-xs font-normal px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                    자연 3D 멀티플레이
+                  소행성 B-612
+                  <span className="text-xs font-normal px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    어린왕자의 별
                   </span>
                 </h1>
                 <p className="text-xs text-slate-400">
-                  아바타를 선택하고 자연 가상 세계에 접속하세요
+                  아바타를 선택하고 신비로운 소행성 B-612를 친구들과 함께 돌아보세요
                 </p>
               </div>
             </div>

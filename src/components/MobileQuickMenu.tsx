@@ -56,7 +56,7 @@ export const MobileQuickMenu: React.FC<MobileQuickMenuProps> = ({
                   모바일 메뉴
                 </span>
               </div>
-              <div className="text-[11px] text-slate-400">메타월드 기능 모음</div>
+              <div className="text-[11px] text-slate-400">소행성 B-612 탐험 메뉴</div>
             </div>
           </div>
           <button
@@ -173,7 +173,7 @@ export const MobileQuickMenu: React.FC<MobileQuickMenuProps> = ({
                   ? '기본'
                   : preset === 'far'
                   ? '원거리'
-                  : '탑뷰'}
+                  : '소행성 전경'}
               </button>
             ))}
           </div>

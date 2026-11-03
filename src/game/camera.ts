@@ -1,23 +1,24 @@
 import * as THREE from 'three';
 import { CameraPreset } from '../types/game.ts';
-import { getTerrainHeight } from './world.ts';
+import { getAsteroidRadius } from './world.ts';
 
 export class ThirdPersonCamera {
   private camera: THREE.PerspectiveCamera;
-  private currentPosition = new THREE.Vector3(0, 5, 10);
-  private currentLookAt = new THREE.Vector3(0, 1.2, 0);
+  private currentPosition = new THREE.Vector3(0, 32, 10);
+  private currentLookAt = new THREE.Vector3(0, 27, 0);
+  private currentUp = new THREE.Vector3(0, 1, 0);
 
-  // Spherical orbit angles
-  public theta: number = 0; // horizontal azimuth
-  public phi: number = 0.35; // vertical pitch (radians from horizontal)
-  public distance: number = 6.2;
+  // Spherical orbit angles relative to character's local surface normal
+  public theta: number = 0; // horizontal azimuth angle around surface normal
+  public phi: number = 0.40; // pitch elevation angle above tangent horizon (radians)
+  public distance: number = 7.5;
   public targetHeight: number = 1.35;
 
   private presetConfigs: Record<CameraPreset, { distance: number; height: number; phi: number }> = {
-    close: { distance: 3.6, height: 1.4, phi: 0.28 },
-    normal: { distance: 6.2, height: 1.35, phi: 0.35 },
-    far: { distance: 11.0, height: 1.5, phi: 0.45 },
-    top: { distance: 16.0, height: 1.2, phi: 1.15 },
+    close: { distance: 4.2, height: 1.3, phi: 0.32 },
+    normal: { distance: 7.5, height: 1.35, phi: 0.40 },
+    far: { distance: 14.0, height: 1.5, phi: 0.52 },
+    top: { distance: 38.0, height: 1.0, phi: 0.85 }, // Asteroid Whole Planet Orbit View
   };
 
   constructor(camera: THREE.PerspectiveCamera) {
@@ -34,49 +35,61 @@ export class ThirdPersonCamera {
   }
 
   public rotate(deltaX: number, deltaY: number) {
-    // DeltaX rotates theta (horizontal)
+    // DeltaX rotates theta (horizontal around surface normal)
     this.theta -= deltaX * 0.0035;
 
-    // DeltaY rotates phi (vertical, clamped to avoid gimbal lock or floor dive)
+    // DeltaY rotates phi (vertical pitch clamped to avoid upside-down flip or floor clipping)
     this.phi += deltaY * 0.0035;
-    this.phi = Math.max(0.08, Math.min(1.42, this.phi));
+    this.phi = Math.max(0.12, Math.min(1.45, this.phi));
   }
 
   public zoom(deltaZoom: number) {
-    this.distance = Math.max(2.5, Math.min(20, this.distance + deltaZoom * 0.004));
+    this.distance = Math.max(3.2, Math.min(48, this.distance + deltaZoom * 0.006));
   }
 
   public update(targetPos: THREE.Vector3, delta: number) {
-    // Desired look-at target (character chest/head level)
-    const idealLookAt = new THREE.Vector3(
-      targetPos.x,
-      targetPos.y + this.targetHeight,
-      targetPos.z
-    );
+    // 1. Surface normal at the character's position
+    const norm = targetPos.clone().normalize();
+    if (norm.lengthSq() < 0.001) norm.set(0, 1, 0);
 
-    // Calculate ideal camera position based on spherical coordinates
+    // 2. Character look-at target elevated along surface normal
+    const idealLookAt = targetPos.clone().add(norm.clone().multiplyScalar(this.targetHeight));
+
+    // 3. Orthonormal tangent frame at player position
+    const helper = Math.abs(norm.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const east = new THREE.Vector3().crossVectors(helper, norm).normalize();
+    const north = new THREE.Vector3().crossVectors(norm, east).normalize();
+
+    // 4. Azimuth direction on the local tangent plane (behind character)
+    const azimuthDir = new THREE.Vector3()
+      .addScaledVector(north, Math.cos(this.theta))
+      .addScaledVector(east, Math.sin(this.theta))
+      .normalize();
+
+    // 5. Ideal camera position in 3D world space
     const horizontalDist = this.distance * Math.cos(this.phi);
     const verticalDist = this.distance * Math.sin(this.phi);
 
-    const idealX = idealLookAt.x + Math.sin(this.theta) * horizontalDist;
-    const idealY = idealLookAt.y + verticalDist;
-    const idealZ = idealLookAt.z + Math.cos(this.theta) * horizontalDist;
+    const idealPosition = idealLookAt
+      .clone()
+      .addScaledVector(norm, verticalDist)
+      .addScaledVector(azimuthDir, horizontalDist);
 
-    // Check terrain collision so camera never clips into ground
-    const terrainFloor = getTerrainHeight(idealX, idealZ) + 0.65;
-    const safeY = Math.max(idealY, terrainFloor);
+    // 6. Collision safety with Asteroid B-612 surface
+    const camDir = idealPosition.clone().normalize();
+    const minSafeRadius = getAsteroidRadius(camDir) + 1.25;
+    if (idealPosition.length() < minSafeRadius) {
+      idealPosition.copy(camDir.multiplyScalar(minSafeRadius));
+    }
 
-    // Smooth exponential damping
-    const dampRate = 9;
-    this.currentPosition.x = THREE.MathUtils.damp(this.currentPosition.x, idealX, dampRate, delta);
-    this.currentPosition.y = THREE.MathUtils.damp(this.currentPosition.y, safeY, dampRate, delta);
-    this.currentPosition.z = THREE.MathUtils.damp(this.currentPosition.z, idealZ, dampRate, delta);
-
-    this.currentLookAt.x = THREE.MathUtils.damp(this.currentLookAt.x, idealLookAt.x, dampRate, delta);
-    this.currentLookAt.y = THREE.MathUtils.damp(this.currentLookAt.y, idealLookAt.y, dampRate, delta);
-    this.currentLookAt.z = THREE.MathUtils.damp(this.currentLookAt.z, idealLookAt.z, dampRate, delta);
+    // 7. Smooth exponential interpolation
+    const dampRate = Math.min(1, delta * 10);
+    this.currentPosition.lerp(idealPosition, dampRate);
+    this.currentLookAt.lerp(idealLookAt, dampRate);
+    this.currentUp.lerp(norm, dampRate).normalize();
 
     this.camera.position.copy(this.currentPosition);
+    this.camera.up.copy(this.currentUp);
     this.camera.lookAt(this.currentLookAt);
   }
 }
